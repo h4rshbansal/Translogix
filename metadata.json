@@ -1,0 +1,5 @@
+{
+  "name": "TransLogix - Smart Transport Management",
+  "description": "A comprehensive transport management system featuring role-based dashboards for Admins, Supervisors, and Drivers with job scheduling, vehicle tracking, and multi-language support.",
+  "requestFramePermissions": []
+}
