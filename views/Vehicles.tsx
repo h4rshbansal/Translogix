@@ -18,54 +18,58 @@ const Vehicles: React.FC = () => {
     t(vehicle.status.toLowerCase().replace('_', '')).toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleAddVehicle = (e: React.FormEvent) => {
+  // Added async and fixed individual vehicle saving
+  const handleAddVehicle = async (e: React.FormEvent) => {
     e.preventDefault();
     const vehicle: Vehicle = {
       ...newVehicle,
       id: Math.random().toString(36).substr(2, 9)
     };
-    const freshVehicles = storageService.getVehicles();
-    const updated = [...freshVehicles, vehicle];
-    storageService.saveVehicles(updated);
+    
+    await storageService.saveVehicle(vehicle);
     if (currentUser) {
-      storageService.addLog({
+      await storageService.addLog({
         userId: currentUser.id,
         userName: currentUser.name,
         role: currentUser.role,
         action: `Added vehicle: ${vehicle.name}`
       });
     }
-    refreshVehicles();
+    await refreshVehicles();
     setIsModalOpen(false);
     setNewVehicle({ name: '', registrationNumber: '', status: VehicleStatus.ACTIVE });
   };
 
-  const handleDelete = (id: string) => {
+  // Added async, await for getUsers, and fixed plural saveVehicles to deleteVehicle
+  const handleDelete = async (id: string) => {
     const targetId = String(id);
-    const freshVehicles = storageService.getVehicles();
+    const freshVehicles = await storageService.getVehicles();
     const vehicleToDelete = freshVehicles.find(v => String(v.id) === targetId);
     if (!vehicleToDelete || !currentUser) return;
 
     if (!confirm(`Are you sure you want to delete vehicle "${vehicleToDelete.name}"?`)) return;
 
-    const updated = freshVehicles.filter(v => String(v.id) !== targetId);
-    storageService.saveVehicles(updated);
+    await storageService.deleteVehicle(targetId);
 
-    storageService.addLog({
+    await storageService.addLog({
       userId: currentUser.id,
       userName: currentUser.name,
       role: currentUser.role,
       action: `Deleted vehicle: ${vehicleToDelete.name}`
     });
 
-    refreshVehicles();
+    await refreshVehicles();
   };
 
-  const updateStatus = (id: string, status: VehicleStatus) => {
-    const freshVehicles = storageService.getVehicles();
-    const updated = freshVehicles.map(v => String(v.id) === String(id) ? { ...v, status } : v);
-    storageService.saveVehicles(updated);
-    refreshVehicles();
+  // Added async, await for getVehicles, and fixed plural saveVehicles to saveVehicle
+  const updateStatus = async (id: string, status: VehicleStatus) => {
+    const freshVehicles = await storageService.getVehicles();
+    const vehicle = freshVehicles.find(v => String(v.id) === String(id));
+    if (vehicle) {
+      const updated = { ...vehicle, status };
+      await storageService.saveVehicle(updated);
+      await refreshVehicles();
+    }
   };
 
   return (

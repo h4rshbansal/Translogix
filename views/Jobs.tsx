@@ -1,10 +1,11 @@
-
 import React, { useState } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { storageService } from '../services/storageService';
 import { Job, JobStatus, UserRole, Priority, VehicleStatus, DriverStatus } from '../types';
 import { TIME_SLOTS } from '../constants';
-import { Plus, Check, X, Trash2, Printer, MapPin, Loader2, Info, ClipboardList, Search, HandMetal, Bookmark, Flag } from 'lucide-react';
+import { Plus, Check, X, Trash2, Printer, MapPin, Loader2, ClipboardList, Search, Bookmark, Flag, Sparkles } from 'lucide-react';
+// Correct import for @google/genai
+import { GoogleGenAI } from "@google/genai";
 
 const Jobs: React.FC = () => {
   const { jobs, refreshJobs, currentUser, users, vehicles, refreshUsers, refreshVehicles, t } = useAppContext();
@@ -14,6 +15,8 @@ const Jobs: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'MY' | 'BOARD'>('MY');
   const [assignData, setAssignData] = useState({ driverId: '', vehicleId: '' });
+  const [loading, setLoading] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
 
   // New job state
   const [newJob, setNewJob] = useState({
@@ -47,9 +50,34 @@ const Jobs: React.FC = () => {
     ? (activeTab === 'MY' ? filteredJobs.filter(j => j.supervisorId === currentUser.id) : boardJobs)
     : filteredJobs;
 
-  const handleCreateJob = (e: React.FormEvent) => {
+  // AI-Assisted Priority Suggestion using Gemini
+  const handleAISuggestPriority = async () => {
+    if (!newJob.purpose) return;
+    setAiLoading(true);
+    try {
+      // Fix: Always initialize GoogleGenAI right before making an API call
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: `Given the transport job purpose: "${newJob.purpose}", categorize its priority as LOW, MEDIUM, or HIGH. Respond with ONLY the category name.`,
+      });
+
+      // Fix: The text property directly returns the string output
+      const priorityText = response.text?.trim()?.toUpperCase();
+      if (priorityText === 'LOW' || priorityText === 'MEDIUM' || priorityText === 'HIGH') {
+        setNewJob(prev => ({ ...prev, priority: priorityText as Priority }));
+      }
+    } catch (err) {
+      console.error("AI Priority Suggestion failed:", err);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleCreateJob = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
+    setLoading(true);
 
     const job: Job = {
       id: Math.random().toString(36).substr(2, 9),
@@ -60,52 +88,69 @@ const Jobs: React.FC = () => {
       createdAt: new Date().toISOString()
     };
 
-    const updatedJobs = [job, ...jobs];
-    storageService.saveJobs(updatedJobs);
-    storageService.addLog({
-      userId: currentUser.id,
-      userName: currentUser.name,
-      role: currentUser.role,
-      action: `Created job: ${job.purpose} (${job.fromPlace} to ${job.toPlace})`
-    });
-    refreshJobs();
-    setIsModalOpen(false);
-    setNewJob({
-      date: new Date().toISOString().split('T')[0],
-      timeSlot: TIME_SLOTS[0],
-      purpose: '',
-      fromPlace: '',
-      toPlace: '',
-      priority: Priority.MEDIUM
-    });
+    try {
+      await storageService.saveJob(job);
+      await storageService.addLog({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        role: currentUser.role,
+        action: `Created job: ${job.purpose} (${job.fromPlace} to ${job.toPlace})`
+      });
+      await refreshJobs();
+      setIsModalOpen(false);
+      setNewJob({
+        date: new Date().toISOString().split('T')[0],
+        timeSlot: TIME_SLOTS[0],
+        purpose: '',
+        fromPlace: '',
+        toPlace: '',
+        priority: Priority.MEDIUM
+      });
+    } catch (err) {
+      alert("Failed to create job.");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleApply = (jobId: string) => {
+  const handleApply = async (jobId: string) => {
     if (!currentUser) return;
-    const updatedJobs = jobs.map(j => 
-      j.id === jobId ? { ...j, supervisorId: currentUser.id, supervisorName: currentUser.name } : j
-    );
-    storageService.saveJobs(updatedJobs);
-    storageService.addLog({
-      userId: currentUser.id,
-      userName: currentUser.name,
-      role: currentUser.role,
-      action: `Applied for Admin job: ${jobId}`
-    });
-    refreshJobs();
+    const job = jobs.find(j => j.id === jobId);
+    if (!job) return;
+
+    try {
+      const updatedJob = { ...job, supervisorId: currentUser.id, supervisorName: currentUser.name };
+      await storageService.saveJob(updatedJob);
+      await storageService.addLog({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        role: currentUser.role,
+        action: `Applied for Admin job: ${jobId}`
+      });
+      await refreshJobs();
+    } catch (err) {
+      alert("Failed to apply.");
+    }
   };
 
-  const handleDeleteJob = (id: string) => {
+  const handleDeleteJob = async (id: string) => {
     if (!currentUser) return;
-    const updatedJobs = jobs.map(j => j.id === id ? { ...j, status: JobStatus.ARCHIVED } : j);
-    storageService.saveJobs(updatedJobs);
-    storageService.addLog({
-      userId: currentUser.id,
-      userName: currentUser.name,
-      role: currentUser.role,
-      action: `Archived job: ${id}`
-    });
-    refreshJobs();
+    const job = jobs.find(j => j.id === id);
+    if (!job) return;
+
+    try {
+      const updatedJob = { ...job, status: JobStatus.ARCHIVED };
+      await storageService.saveJob(updatedJob);
+      await storageService.addLog({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        role: currentUser.role,
+        action: `Archived job: ${id}`
+      });
+      await refreshJobs();
+    } catch (err) {
+      alert("Failed to archive job.");
+    }
   };
 
   const handleApprove = (job: Job) => {
@@ -113,26 +158,28 @@ const Jobs: React.FC = () => {
     setIsAssignModalOpen(true);
   };
 
-  const handleReject = (job: Job) => {
+  const handleReject = async (job: Job) => {
     const reason = prompt("Enter rejection reason:");
     if (reason === null) return;
 
-    const updatedJobs = jobs.map(j => 
-      j.id === job.id ? { ...j, status: JobStatus.REJECTED, remarks: reason } : j
-    );
-    storageService.saveJobs(updatedJobs);
-    if (currentUser) {
-      storageService.addLog({
-        userId: currentUser.id,
-        userName: currentUser.name,
-        role: currentUser.role,
-        action: `Rejected job: ${job.id}`
-      });
+    try {
+      const updatedJob = { ...job, status: JobStatus.REJECTED, remarks: reason };
+      await storageService.saveJob(updatedJob);
+      if (currentUser) {
+        await storageService.addLog({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          role: currentUser.role,
+          action: `Rejected job: ${job.id}`
+        });
+      }
+      await refreshJobs();
+    } catch (err) {
+      alert("Failed to reject job.");
     }
-    refreshJobs();
   };
 
-  const handleAssign = () => {
+  const handleAssign = async () => {
     if (!selectedJob || !currentUser) return;
     const driver = users.find(u => u.id === assignData.driverId);
     const vehicle = vehicles.find(v => v.id === assignData.vehicleId);
@@ -149,59 +196,67 @@ const Jobs: React.FC = () => {
 
     if (isVehicleBusy) return alert("Vehicle already assigned for this time slot");
 
-    const updatedJobs = jobs.map(j => 
-      j.id === selectedJob.id ? { 
-        ...j, 
+    setLoading(true);
+    try {
+      const updatedJob: Job = { 
+        ...selectedJob, 
         status: JobStatus.APPROVED, 
         driverId: driver.id, 
         driverName: driver.name,
         vehicleId: vehicle.id,
         vehicleName: vehicle.name,
         approvedAt: new Date().toISOString()
-      } : j
-    );
+      };
 
-    const updatedUsers = users.map(u => u.id === driver.id ? { ...u, status: DriverStatus.ASSIGNED } : u);
-    storageService.saveUsers(updatedUsers);
-    storageService.saveJobs(updatedJobs);
-    
-    storageService.addLog({
-      userId: currentUser.id,
-      userName: currentUser.name,
-      role: currentUser.role,
-      action: `Approved job ${selectedJob.id} and assigned to ${driver.name}`
-    });
+      const updatedDriver = { ...driver, status: DriverStatus.ASSIGNED };
+      
+      await storageService.saveJob(updatedJob);
+      await storageService.saveUser(updatedDriver);
+      
+      await storageService.addLog({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        role: currentUser.role,
+        action: `Approved job ${selectedJob.id} and assigned to ${driver.name}`
+      });
 
-    refreshJobs();
-    refreshUsers();
-    setIsAssignModalOpen(false);
-    setSelectedJob(null);
+      await refreshJobs();
+      await refreshUsers();
+      setIsAssignModalOpen(false);
+      setSelectedJob(null);
+    } catch (err) {
+      alert("Assignment failed.");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const updateDriverProgress = (job: Job, newStatus: JobStatus) => {
+  const updateDriverProgress = async (job: Job, newStatus: JobStatus) => {
     if (!currentUser) return;
-    const updatedJobs = jobs.map(j => 
-      j.id === job.id ? { 
-        ...j, 
+    try {
+      const updatedJob = { 
+        ...job, 
         status: newStatus,
-        completedAt: newStatus === JobStatus.COMPLETED ? new Date().toISOString() : j.completedAt
-      } : j
-    );
-    
-    if (newStatus === JobStatus.COMPLETED) {
-      const updatedUsers = users.map(u => u.id === currentUser.id ? { ...u, status: DriverStatus.AVAILABLE } : u);
-      storageService.saveUsers(updatedUsers);
-      refreshUsers();
-    }
+        completedAt: newStatus === JobStatus.COMPLETED ? new Date().toISOString() : job.completedAt
+      };
+      
+      if (newStatus === JobStatus.COMPLETED) {
+        const updatedUser = { ...currentUser, status: DriverStatus.AVAILABLE };
+        await storageService.saveUser(updatedUser);
+        await refreshUsers();
+      }
 
-    storageService.saveJobs(updatedJobs);
-    storageService.addLog({
-      userId: currentUser.id,
-      userName: currentUser.name,
-      role: currentUser.role,
-      action: `Updated job status: ${newStatus}`
-    });
-    refreshJobs();
+      await storageService.saveJob(updatedJob);
+      await storageService.addLog({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        role: currentUser.role,
+        action: `Updated job status: ${newStatus}`
+      });
+      await refreshJobs();
+    } catch (err) {
+      alert("Update failed.");
+    }
   };
 
   const handlePrint = (job: Job) => {
@@ -320,27 +375,21 @@ const Jobs: React.FC = () => {
                         <MapPin size={12} className="text-blue-500" />
                         <span className="text-xs text-slate-500 dark:text-slate-400">{job.fromPlace}</span>
                         <span className="text-xs text-slate-300 dark:text-slate-600">→</span>
-                        <Flag size={12} className="text-red-500" />
+                        <Flag size={12} className="text-emerald-500" />
                         <span className="text-xs text-slate-500 dark:text-slate-400">{job.toPlace}</span>
                       </div>
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        {job.supervisorId === 'admin' ? <span className="text-blue-500 font-bold uppercase">Open Requirement</span> : `By ${job.supervisorName}`}
-                      </p>
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <div className="text-sm">
-                      <p className="text-slate-800 dark:text-slate-200 font-medium">{job.date}</p>
-                      <p className="text-slate-500 dark:text-slate-400 text-xs">{job.timeSlot}</p>
-                    </div>
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{job.date}</p>
+                    <p className="text-xs text-slate-400">{job.timeSlot}</p>
                   </td>
                   <td className="px-6 py-4">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${
-                      job.status === JobStatus.PENDING ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400' :
-                      job.status === JobStatus.APPROVED ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' :
-                      job.status === JobStatus.REJECTED ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400' :
-                      job.status === JobStatus.COMPLETED ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400' :
-                      'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400'
+                    <span className={`px-2 py-1 text-[10px] font-bold rounded-full uppercase ${
+                      job.status === JobStatus.PENDING ? 'bg-orange-100 text-orange-600' :
+                      job.status === JobStatus.APPROVED ? 'bg-blue-100 text-blue-600' :
+                      job.status === JobStatus.COMPLETED ? 'bg-green-100 text-green-600' :
+                      'bg-slate-100 text-slate-600'
                     }`}>
                       {t(job.status.toLowerCase())}
                     </span>
@@ -348,8 +397,8 @@ const Jobs: React.FC = () => {
                   <td className="px-6 py-4">
                     <span className={`text-xs font-bold ${
                       job.priority === Priority.HIGH ? 'text-red-500' :
-                      job.priority === Priority.MEDIUM ? 'text-blue-500' :
-                      'text-slate-400'
+                      job.priority === Priority.MEDIUM ? 'text-orange-500' :
+                      'text-blue-500'
                     }`}>
                       {t(job.priority.toLowerCase())}
                     </span>
@@ -358,66 +407,30 @@ const Jobs: React.FC = () => {
                     <div className="flex items-center space-x-2">
                       {currentUser?.role === UserRole.ADMIN && job.status === JobStatus.PENDING && (
                         <>
-                          {job.supervisorId !== 'admin' ? (
-                            <>
-                              <button onClick={() => handleApprove(job)} className="p-2 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg transition-colors" title="Approve">
-                                <Check size={18} />
-                              </button>
-                              <button onClick={() => handleReject(job)} className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors" title="Reject">
-                                <X size={18} />
-                              </button>
-                            </>
-                          ) : (
-                            <span className="text-[10px] text-slate-400 uppercase font-bold italic">Waiting for Supervisor</span>
-                          )}
+                          <button onClick={() => handleApprove(job)} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100" title="Approve & Assign"><Check size={16}/></button>
+                          <button onClick={() => handleReject(job)} className="p-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100" title="Reject"><X size={16}/></button>
                         </>
                       )}
-
                       {currentUser?.role === UserRole.SUPERVISOR && activeTab === 'BOARD' && (
-                        <button 
-                          onClick={() => handleApply(job.id)}
-                          className="flex items-center space-x-1 px-3 py-1 bg-green-600 text-white text-xs font-bold rounded-lg hover:bg-green-700 transition-colors shadow-md shadow-green-600/20"
-                        >
-                          <HandMetal size={14} />
+                        <button onClick={() => handleApply(job.id)} className="p-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-1 text-xs px-2 font-bold">
                           <span>{t('apply')}</span>
                         </button>
                       )}
-
-                      {currentUser?.role === UserRole.DRIVER && (
-                        <>
-                          {job.status === JobStatus.APPROVED && (
-                            <button onClick={() => updateDriverProgress(job, JobStatus.ACCEPTED)} className="px-3 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 font-bold">
-                              {t('acceptJob')}
-                            </button>
-                          )}
-                          {job.status === JobStatus.ACCEPTED && (
-                            <button onClick={() => updateDriverProgress(job, JobStatus.REACHED)} className="px-3 py-1 bg-yellow-500 text-white text-xs rounded-lg hover:bg-yellow-600 font-bold">
-                              {t('reached')}
-                            </button>
-                          )}
-                          {job.status === JobStatus.REACHED && (
-                            <button onClick={() => updateDriverProgress(job, JobStatus.ON_WORK)} className="px-3 py-1 bg-indigo-500 text-white text-xs rounded-lg hover:bg-indigo-600 font-bold">
-                              {t('onWork')}
-                            </button>
-                          )}
-                          {job.status === JobStatus.ON_WORK && (
-                            <button onClick={() => updateDriverProgress(job, JobStatus.COMPLETED)} className="px-3 py-1 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700 font-bold">
-                              {t('completed')}
-                            </button>
-                          )}
-                        </>
+                      {currentUser?.role === UserRole.DRIVER && job.status === JobStatus.APPROVED && (
+                        <button onClick={() => updateDriverProgress(job, JobStatus.ACCEPTED)} className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg">{t('acceptJob')}</button>
                       )}
-
-                      {(job.status === JobStatus.APPROVED || job.status === JobStatus.COMPLETED) && (
-                        <button onClick={() => handlePrint(job)} className="p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg" title="Print Slip">
-                          <Printer size={18} />
-                        </button>
+                      {currentUser?.role === UserRole.DRIVER && job.status === JobStatus.ACCEPTED && (
+                        <button onClick={() => updateDriverProgress(job, JobStatus.REACHED)} className="px-3 py-1.5 bg-orange-500 text-white text-xs font-bold rounded-lg">{t('reached')}</button>
                       )}
-
-                      {(currentUser?.role === UserRole.ADMIN || (currentUser?.role === UserRole.SUPERVISOR && job.status === JobStatus.PENDING && job.supervisorId === currentUser.id)) && (
-                        <button onClick={() => handleDeleteJob(job.id)} className="p-2 text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 rounded-lg" title="Archive">
-                          <Trash2 size={18} />
-                        </button>
+                      {currentUser?.role === UserRole.DRIVER && job.status === JobStatus.REACHED && (
+                        <button onClick={() => updateDriverProgress(job, JobStatus.ON_WORK)} className="px-3 py-1.5 bg-purple-500 text-white text-xs font-bold rounded-lg">{t('onWork')}</button>
+                      )}
+                      {currentUser?.role === UserRole.DRIVER && job.status === JobStatus.ON_WORK && (
+                        <button onClick={() => updateDriverProgress(job, JobStatus.COMPLETED)} className="px-3 py-1.5 bg-green-600 text-white text-xs font-bold rounded-lg">{t('completed')}</button>
+                      )}
+                      <button onClick={() => handlePrint(job)} className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-white"><Printer size={16}/></button>
+                      {(currentUser?.role === UserRole.ADMIN || (currentUser?.role === UserRole.SUPERVISOR && job.supervisorId === currentUser.id)) && (
+                        <button onClick={() => handleDeleteJob(job.id)} className="p-1.5 text-slate-400 hover:text-red-500"><Trash2 size={16}/></button>
                       )}
                     </div>
                   </td>
@@ -426,9 +439,9 @@ const Jobs: React.FC = () => {
             </tbody>
           </table>
           {displayJobs.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-12 text-slate-400 dark:text-slate-500">
-              <ClipboardList size={48} className="mb-2 opacity-20" />
-              <p>{activeTab === 'BOARD' ? 'No open requirements currently' : 'No jobs found in this category'}</p>
+            <div className="py-20 text-center text-slate-400">
+              <ClipboardList size={48} className="mx-auto mb-2 opacity-20" />
+              <p>No jobs found</p>
             </div>
           )}
         </div>
@@ -437,87 +450,54 @@ const Jobs: React.FC = () => {
       {/* Create Job Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden transition-colors duration-200">
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <h3 className="text-xl font-bold text-slate-900 dark:text-white">{t('createJob')}</h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors">
-                <X size={24} />
-              </button>
+          <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+              <h3 className="text-xl font-bold dark:text-white">{t('createJob')}</h3>
+              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-white"><X size={24}/></button>
             </div>
             <form onSubmit={handleCreateJob} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold mb-1 dark:text-slate-300">{t('fromPlace')}</label>
+                  <input required className="w-full px-4 py-2 border dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-xl outline-none" value={newJob.fromPlace} onChange={e => setNewJob({...newJob, fromPlace: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold mb-1 dark:text-slate-300">{t('toPlace')}</label>
+                  <input required className="w-full px-4 py-2 border dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-xl outline-none" value={newJob.toPlace} onChange={e => setNewJob({...newJob, toPlace: e.target.value})} />
+                </div>
+              </div>
               <div>
-                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">{t('purpose')}</label>
-                <input 
-                  type="text" 
-                  required
-                  placeholder="e.g. Raw Material Transport"
-                  className="w-full px-4 py-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 dark:text-white rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-colors"
-                  value={newJob.purpose}
-                  onChange={e => setNewJob({...newJob, purpose: e.target.value})}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">{t('fromPlace')}</label>
-                  <input 
-                    type="text" 
-                    required
-                    placeholder="Warehouse A"
-                    className="w-full px-4 py-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 dark:text-white rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-colors"
-                    value={newJob.fromPlace}
-                    onChange={e => setNewJob({...newJob, fromPlace: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">{t('toPlace')}</label>
-                  <input 
-                    type="text" 
-                    required
-                    placeholder="Factory B"
-                    className="w-full px-4 py-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 dark:text-white rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-colors"
-                    value={newJob.toPlace}
-                    onChange={e => setNewJob({...newJob, toPlace: e.target.value})}
-                  />
+                <label className="block text-sm font-bold mb-1 dark:text-slate-300">{t('purpose')}</label>
+                <div className="flex gap-2">
+                  <input required className="flex-1 px-4 py-2 border dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-xl outline-none" value={newJob.purpose} onChange={e => setNewJob({...newJob, purpose: e.target.value})} />
+                  <button type="button" onClick={handleAISuggestPriority} disabled={aiLoading || !newJob.purpose} className="px-3 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 disabled:opacity-50 transition-colors">
+                    {aiLoading ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                  </button>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">{t('date')}</label>
-                  <input 
-                    type="date" 
-                    required
-                    className="w-full px-4 py-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 dark:text-white rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-colors"
-                    value={newJob.date}
-                    onChange={e => setNewJob({...newJob, date: e.target.value})}
-                  />
+                  <label className="block text-sm font-bold mb-1 dark:text-slate-300">{t('date')}</label>
+                  <input type="date" required className="w-full px-4 py-2 border dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-xl outline-none" value={newJob.date} onChange={e => setNewJob({...newJob, date: e.target.value})} />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">{t('priority')}</label>
-                  <select 
-                    className="w-full px-4 py-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 dark:text-white rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-colors"
-                    value={newJob.priority}
-                    onChange={e => setNewJob({...newJob, priority: e.target.value as Priority})}
-                  >
-                    <option value={Priority.LOW}>{t('low')}</option>
-                    <option value={Priority.MEDIUM}>{t('medium')}</option>
-                    <option value={Priority.HIGH}>{t('high')}</option>
+                  <label className="block text-sm font-bold mb-1 dark:text-slate-300">{t('time')}</label>
+                  <select className="w-full px-4 py-2 border dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-xl outline-none" value={newJob.timeSlot} onChange={e => setNewJob({...newJob, timeSlot: e.target.value})}>
+                    {TIME_SLOTS.map(slot => <option key={slot} value={slot}>{slot}</option>)}
                   </select>
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">{t('time')}</label>
-                <select 
-                  className="w-full px-4 py-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 dark:text-white rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-colors"
-                  value={newJob.timeSlot}
-                  onChange={e => setNewJob({...newJob, timeSlot: e.target.value})}
-                >
-                  {TIME_SLOTS.map(slot => <option key={slot} value={slot}>{slot}</option>)}
-                </select>
+                <label className="block text-sm font-bold mb-1 dark:text-slate-300">{t('priority')}</label>
+                <div className="flex gap-2">
+                  {Object.values(Priority).map(p => (
+                    <button key={p} type="button" onClick={() => setNewJob({...newJob, priority: p})} className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all ${newJob.priority === p ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 dark:border-slate-800 text-slate-500'}`}>{t(p.toLowerCase())}</button>
+                  ))}
+                </div>
               </div>
-              <div className="pt-4 flex gap-3">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 px-4 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-xl">{t('cancel')}</button>
-                <button type="submit" className="flex-1 px-4 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-600/20">{t('confirm')}</button>
-              </div>
+              <button disabled={loading} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg hover:bg-blue-700 transition-all mt-4 flex items-center justify-center">
+                {loading ? <Loader2 className="animate-spin mr-2" size={20} /> : t('createJob')}
+              </button>
             </form>
           </div>
         </div>
@@ -526,54 +506,33 @@ const Jobs: React.FC = () => {
       {/* Assign Modal */}
       {isAssignModalOpen && selectedJob && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-md shadow-xl overflow-hidden transition-colors duration-200">
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <h3 className="text-xl font-bold text-slate-900 dark:text-white">Approve & Assign</h3>
-              <button onClick={() => setIsAssignModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors">
-                <X size={24} />
-              </button>
+          <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+              <h3 className="text-xl font-bold dark:text-white">{t('assign')}</h3>
+              <button onClick={() => setIsAssignModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-white"><X size={24}/></button>
             </div>
             <div className="p-6 space-y-4">
-              <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-800">
-                <p className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-1">{selectedJob.purpose}</p>
-                <div className="flex items-center space-x-1 mb-2">
-                    <span className="text-xs text-slate-500">{selectedJob.fromPlace}</span>
-                    <span className="text-xs text-slate-400">→</span>
-                    <span className="text-xs text-slate-500">{selectedJob.toPlace}</span>
-                </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400">{selectedJob.date} | {selectedJob.timeSlot}</p>
-                <p className="text-[10px] text-blue-500 font-bold mt-2 uppercase tracking-widest">Requested By: {selectedJob.supervisorName}</p>
-              </div>
               <div>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1">{t('drivers')}</label>
-                <select 
-                  className="w-full px-4 py-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 dark:text-white rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-colors shadow-inner"
-                  value={assignData.driverId}
-                  onChange={e => setAssignData({...assignData, driverId: e.target.value})}
-                >
-                  <option value="">Select Available Driver</option>
+                <label className="block text-sm font-bold mb-1 dark:text-slate-300">{t('drivers')}</label>
+                <select className="w-full px-4 py-2 border dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-xl outline-none" value={assignData.driverId} onChange={e => setAssignData({...assignData, driverId: e.target.value})}>
+                  <option value="">Select Driver</option>
                   {users.filter(u => u.role === UserRole.DRIVER && u.status === DriverStatus.AVAILABLE).map(d => (
                     <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1">{t('vehicles')}</label>
-                <select 
-                  className="w-full px-4 py-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 dark:text-white rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-colors shadow-inner"
-                  value={assignData.vehicleId}
-                  onChange={e => setAssignData({...assignData, vehicleId: e.target.value})}
-                >
-                  <option value="">Select Active Vehicle</option>
+                <label className="block text-sm font-bold mb-1 dark:text-slate-300">{t('vehicles')}</label>
+                <select className="w-full px-4 py-2 border dark:bg-slate-950 dark:border-slate-800 dark:text-white rounded-xl outline-none" value={assignData.vehicleId} onChange={e => setAssignData({...assignData, vehicleId: e.target.value})}>
+                  <option value="">Select Vehicle</option>
                   {vehicles.filter(v => v.status === VehicleStatus.ACTIVE).map(v => (
                     <option key={v.id} value={v.id}>{v.name} ({v.registrationNumber})</option>
                   ))}
                 </select>
               </div>
-              <div className="pt-4 flex gap-3">
-                <button onClick={() => setIsAssignModalOpen(false)} className="flex-1 px-4 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-xl transition-colors">{t('cancel')}</button>
-                <button onClick={handleAssign} className="flex-1 px-4 py-3 bg-green-600 text-white font-bold rounded-xl shadow-lg shadow-green-600/20 hover:bg-green-700 transition-all">{t('assign')}</button>
-              </div>
+              <button onClick={handleAssign} disabled={loading} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg hover:bg-blue-700 transition-all mt-4 flex items-center justify-center">
+                {loading ? <Loader2 className="animate-spin mr-2" size={20} /> : t('confirm')}
+              </button>
             </div>
           </div>
         </div>

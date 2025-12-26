@@ -17,7 +17,8 @@ const Supervisors: React.FC = () => {
     s.username.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleAddSupervisor = (e: React.FormEvent) => {
+  // Added async and fixed plural saveUsers to saveUser
+  const handleAddSupervisor = async (e: React.FormEvent) => {
     e.preventDefault();
     if (users.some(u => u.username === newSupervisor.username)) {
       alert("Username already exists!");
@@ -29,40 +30,40 @@ const Supervisors: React.FC = () => {
       id: Math.random().toString(36).substr(2, 9),
       role: UserRole.SUPERVISOR
     };
-    const updated = [...users, user];
-    storageService.saveUsers(updated);
+    
+    await storageService.saveUser(user);
     if (currentUser) {
-      storageService.addLog({
+      await storageService.addLog({
         userId: currentUser.id,
         userName: currentUser.name,
         role: currentUser.role,
         action: `Added supervisor: ${user.name}`
       });
     }
-    refreshUsers();
+    await refreshUsers();
     setIsModalOpen(false);
     setNewSupervisor({ name: '', username: '', password: 'password', status: 'Active' });
   };
 
-  const handleDelete = (id: string) => {
+  // Added async, await for getUsers, and fixed plural saveUsers to deleteUser
+  const handleDelete = async (id: string) => {
     const targetId = String(id);
-    const freshUsers = storageService.getUsers();
+    const freshUsers = await storageService.getUsers();
     const supervisorToDelete = freshUsers.find(u => String(u.id) === targetId);
     if (!supervisorToDelete || !currentUser) return;
 
     if (!confirm(`Are you sure you want to delete supervisor "${supervisorToDelete.name}"?`)) return;
 
-    const updated = freshUsers.filter(u => String(u.id) !== targetId);
-    storageService.saveUsers(updated);
+    await storageService.deleteUser(targetId);
 
-    storageService.addLog({
+    await storageService.addLog({
       userId: currentUser.id,
       userName: currentUser.name,
       role: currentUser.role,
       action: `Deleted supervisor: ${supervisorToDelete.name}`
     });
 
-    refreshUsers();
+    await refreshUsers();
   };
 
   return (

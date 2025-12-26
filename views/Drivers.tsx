@@ -12,54 +12,59 @@ const Drivers: React.FC = () => {
 
   const drivers = users.filter(u => u.role === UserRole.DRIVER);
 
-  const handleAddDriver = (e: React.FormEvent) => {
+  // Added async and fixed plural saveUsers to saveUser
+  const handleAddDriver = async (e: React.FormEvent) => {
     e.preventDefault();
     const user: User = {
       ...newUser,
       id: Math.random().toString(36).substr(2, 9),
       role: UserRole.DRIVER
     };
-    const updated = [...users, user];
-    storageService.saveUsers(updated);
+    
+    await storageService.saveUser(user);
     if (currentUser) {
-      storageService.addLog({
+      await storageService.addLog({
         userId: currentUser.id,
         userName: currentUser.name,
         role: currentUser.role,
         action: `Added driver: ${user.name}`
       });
     }
-    refreshUsers();
+    await refreshUsers();
     setIsModalOpen(false);
     setNewUser({ name: '', username: '', password: 'password', status: DriverStatus.AVAILABLE });
   };
 
-  const updateStatus = (id: string, status: string) => {
-    const freshUsers = storageService.getUsers();
-    const updated = freshUsers.map(u => String(u.id) === String(id) ? { ...u, status } : u);
-    storageService.saveUsers(updated);
-    refreshUsers();
+  // Added async, await for getUsers, and fixed plural saveUsers to saveUser
+  const updateStatus = async (id: string, status: string) => {
+    const freshUsers = await storageService.getUsers();
+    const user = freshUsers.find(u => String(u.id) === String(id));
+    if (user) {
+        const updated = { ...user, status };
+        await storageService.saveUser(updated);
+        await refreshUsers();
+    }
   };
 
-  const handleDelete = (id: string) => {
+  // Added async, await for getUsers, and fixed plural saveUsers to deleteUser
+  const handleDelete = async (id: string) => {
     const targetId = String(id);
-    const freshUsers = storageService.getUsers();
+    const freshUsers = await storageService.getUsers();
     const driverToDelete = freshUsers.find(u => String(u.id) === targetId);
     if (!driverToDelete || !currentUser) return;
 
     if (!confirm(`Are you sure you want to delete driver "${driverToDelete.name}"?`)) return;
 
-    const updated = freshUsers.filter(u => String(u.id) !== targetId);
-    storageService.saveUsers(updated);
+    await storageService.deleteUser(targetId);
     
-    storageService.addLog({
+    await storageService.addLog({
       userId: currentUser.id,
       userName: currentUser.name,
       role: currentUser.role,
       action: `Deleted driver: ${driverToDelete.name}`
     });
     
-    refreshUsers();
+    await refreshUsers();
   };
 
   return (

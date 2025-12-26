@@ -3,12 +3,13 @@ import React, { useState } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { storageService } from '../services/storageService';
 import { User, UserRole } from '../types';
-import { UserPlus, Trash2, Search, X, Shield, Users as UsersIcon } from 'lucide-react';
+import { UserPlus, Trash2, Search, X, Shield, Users as UsersIcon, Loader2 } from 'lucide-react';
 
 const Users: React.FC = () => {
   const { users, refreshUsers, currentUser, t } = useAppContext();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(false);
   const [newUser, setNewUser] = useState({
     name: '',
     username: '',
@@ -23,7 +24,7 @@ const Users: React.FC = () => {
     user.role.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleAddUser = (e: React.FormEvent) => {
+  const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
 
@@ -32,32 +33,38 @@ const Users: React.FC = () => {
       return;
     }
 
+    setLoading(true);
     const user: User = {
       ...newUser,
       id: Math.random().toString(36).substr(2, 9)
     };
 
-    const updatedUsers = [...users, user];
-    storageService.saveUsers(updatedUsers);
-    storageService.addLog({
-      userId: currentUser.id,
-      userName: currentUser.name,
-      role: currentUser.role,
-      action: `Created user: ${user.name} (${user.role})`
-    });
-    
-    refreshUsers();
-    setIsModalOpen(false);
-    setNewUser({
-      name: '',
-      username: '',
-      password: '',
-      role: UserRole.SUPERVISOR,
-      status: 'Active'
-    });
+    try {
+      await storageService.saveUser(user);
+      await storageService.addLog({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        role: currentUser.role,
+        action: `Created user: ${user.name} (${user.role})`
+      });
+      
+      await refreshUsers();
+      setIsModalOpen(false);
+      setNewUser({
+        name: '',
+        username: '',
+        password: '',
+        role: UserRole.SUPERVISOR,
+        status: 'Active'
+      });
+    } catch (err) {
+      alert("Failed to add user.");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleDeleteUser = (id: string) => {
+  const handleDeleteUser = async (id: string) => {
     const currentUserId = String(currentUser?.id);
     const targetId = String(id);
 
@@ -66,8 +73,7 @@ const Users: React.FC = () => {
       return;
     }
 
-    const freshUsers = storageService.getUsers();
-    const userToDelete = freshUsers.find(u => String(u.id) === targetId);
+    const userToDelete = users.find(u => String(u.id) === targetId);
     if (!userToDelete) {
       alert("User not found.");
       return;
@@ -75,17 +81,18 @@ const Users: React.FC = () => {
 
     if (!confirm(`Are you sure you want to delete user "${userToDelete.name}"? This action cannot be undone.`)) return;
 
-    const updatedUsers = freshUsers.filter(u => String(u.id) !== targetId);
-    storageService.saveUsers(updatedUsers);
-    
-    storageService.addLog({
-      userId: currentUser.id,
-      userName: currentUser.name,
-      role: currentUser.role,
-      action: `Deleted user: ${userToDelete.name} (${userToDelete.role})`
-    });
-    
-    refreshUsers();
+    try {
+      await storageService.deleteUser(targetId);
+      await storageService.addLog({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        role: currentUser.role,
+        action: `Deleted user: ${userToDelete.name} (${userToDelete.role})`
+      });
+      await refreshUsers();
+    } catch (err) {
+      alert("Failed to delete user.");
+    }
   };
 
   return (
@@ -232,7 +239,9 @@ const Users: React.FC = () => {
               </div>
               <div className="pt-6 flex gap-3">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 px-4 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">{t('cancel')}</button>
-                <button type="submit" className="flex-1 px-4 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-600/20 hover:bg-blue-700 transition-all">{t('confirm')}</button>
+                <button type="submit" disabled={loading} className="flex-1 px-4 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-600/20 hover:bg-blue-700 transition-all flex items-center justify-center">
+                  {loading ? <Loader2 className="animate-spin mr-2" size={20} /> : t('confirm')}
+                </button>
               </div>
             </form>
           </div>

@@ -9,23 +9,33 @@ const Login: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const users = storageService.getUsers();
-    // Use trim to avoid whitespace issues during login
-    const user = users.find(u => u.username.trim() === username.trim() && u.password === password);
+    setLoading(true);
+    setError('');
+    
+    try {
+      const users = await storageService.getUsers();
+      // Use trim to avoid whitespace issues during login
+      const user = users.find(u => u.username.trim() === username.trim() && u.password === password);
 
-    if (user) {
-      storageService.addLog({
-        userId: user.id,
-        userName: user.name,
-        role: user.role,
-        action: 'Logged in'
-      });
-      setCurrentUser(user);
-    } else {
-      setError('Invalid credentials. Please contact your administrator.');
+      if (user) {
+        await storageService.addLog({
+          userId: user.id,
+          userName: user.name,
+          role: user.role,
+          action: 'Logged in'
+        });
+        setCurrentUser(user);
+      } else {
+        setError('Invalid credentials. Please contact your administrator.');
+      }
+    } catch (err) {
+      setError('Connection error. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -61,6 +71,7 @@ const Login: React.FC = () => {
                   required
                   autoComplete="one-time-code"
                   spellCheck="false"
+                  disabled={loading}
                 />
               </div>
             </div>
@@ -78,14 +89,16 @@ const Login: React.FC = () => {
                   placeholder="Enter password"
                   required
                   autoComplete="one-time-code"
+                  disabled={loading}
                 />
               </div>
             </div>
             <button
               type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg shadow-blue-600/20"
+              disabled={loading}
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg shadow-blue-600/20 flex items-center justify-center"
             >
-              {t('login')}
+              {loading ? 'Authenticating...' : t('login')}
             </button>
           </form>
         </div>
